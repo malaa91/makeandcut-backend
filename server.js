@@ -219,6 +219,106 @@ app.post('/api/login', async (req, res) => {
   });
 });
 
+// Génération automatique de sous-titres
+app.post('/api/generate-subtitles', upload.single('video'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'Aucune vidéo reçue' });
+    }
+
+    // 1. Upload vers Cloudinary pour transcription
+    const uploadResult = await new Promise((resolve, reject) => {
+      cloudinary.uploader.upload_stream(
+        { 
+          resource_type: 'video',
+          folder: 'makeandcut',
+          raw_convert: 'google_speech' // Transcription automatique
+        },
+        (error, result) => {
+          if (error) reject(error);
+          else resolve(result);
+        }
+      ).end(req.file.buffer);
+    });
+
+    // 2. Récupérer les sous-titres générés
+    const subtitles = await generateSubtitlesFromVideo(uploadResult.public_id);
+    
+    res.json({
+      success: true,
+      subtitles: subtitles.map((sub, index) => ({
+        id: Date.now() + index,
+        text: sub.text,
+        startTime: sub.start,
+        endTime: sub.end,
+        confidence: sub.confidence
+      }))
+    });
+
+  } catch (error) {
+    console.error('Erreur génération sous-titres:', error);
+    res.status(500).json({ error: 'Erreur génération sous-titres' });
+  }
+});
+
+// Export avec overlays
+app.post('/api/export-with-overlays', upload.single('video'), async (req, res) => {
+  try {
+    const { subtitles, textOverlays } = req.body;
+    const overlays = JSON.parse(textOverlays);
+
+    // Upload vidéo originale
+    const uploadResult = await new Promise((resolve, reject) => {
+      cloudinary.uploader.upload_stream(
+        { resource_type: 'video', folder: 'makeandcut' },
+        (error, result) => {
+          if (error) reject(error);
+          else resolve(result);
+        }
+      ).end(req.file.buffer);
+    });
+
+    // Générer les transformations Cloudinary pour les overlays
+    let transformation = '';
+    
+    textOverlays.forEach((overlay, index) => {
+      transformation += `l_text:${overlay.styles.fontFamily}_${overlay.styles.fontSize}:${encodeURIComponent(overlay.text)},co_${overlay.styles.color.replace('#', '')},bga_${overlay.styles.backgroundColor.replace('rgba(', '').replace(')', '')}/fl_layer_apply,so_${overlay.startTime},eo_${overlay.endTime}/`;
+    });
+
+    const finalUrl = `https://res.cloudinary.com/dyogjyik0/video/upload/${transformation}q_auto/f_mp4/${uploadResult.public_id}.mp4`;
+
+    res.json({
+      success: true,
+      downloadUrl: finalUrl,
+      message: 'Vidéo exportée avec overlays'
+    });
+
+  } catch (error) {
+    console.error('Erreur export:', error);
+    res.status(500).json({ error: 'Erreur lors de l\'export' });
+  }
+});
+
+// Fonction helper pour générer les sous-titres
+async function generateSubtitlesFromVideo(publicId) {
+  // Implémentation avec l'API Cloudinary ou service externe
+  // Pour l'exemple, retourne des données mock
+  return [
+    {
+      text: "Bonjour et bienvenue dans cette vidéo",
+      start: 0,
+      end: 3,
+      confidence: 0.95
+    },
+    {
+      text: "Aujourd'hui nous allons découvrir de nouvelles fonctionnalités",
+      start: 3,
+      end: 7,
+      confidence: 0.89
+    }
+  ];
+}
+
 // Port dynamique pour Render
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, '0.0.0.0', () => {
