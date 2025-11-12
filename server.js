@@ -122,139 +122,6 @@ app.get('/', (req, res) => {
 });
 
 // Route pour couper la vidéo AVEC CLOUDINARY
-app.post('/api/cut-video', upload.single('video'), async (req, res) => {
-  try {
-    if (!req.file) {
-      return res.status(400).json({ error: 'Aucune vidéo reçue' });
-    }
-
-    const { startTime, endTime } = req.body;
-    const duration = endTime - startTime;
-
-    console.log('✂️ Découpage vidéo demandé:', {
-      startTime, 
-      endTime, 
-      duration,
-      file: req.file.originalname,
-      size: (req.file.size / 1024 / 1024).toFixed(2) + ' MB'
-    });
-
-    // 1. Upload vers Cloudinary
-    const uploadResult = await new Promise((resolve, reject) => {
-      cloudinary.uploader.upload_stream(
-        { 
-          resource_type: 'video',
-          folder: 'makeandcut',
-          eager: [
-            {
-              start_offset: startTime.toString(),
-              end_offset: endTime.toString(),
-              quality: "auto",
-              format: "mp4"
-            }
-          ]
-        },
-        (error, result) => {
-          if (error) {
-            console.error('❌ Erreur upload Cloudinary:', error);
-            reject(error);
-          } else {
-            console.log('✅ Upload Cloudinary réussi:', result.public_id);
-            resolve(result);
-          }
-        }
-      ).end(req.file.buffer);
-    });
-
-    // 2. Vérifier que le traitement eager est terminé
-    if (uploadResult.eager && uploadResult.eager[0]) {
-      const processedVideo = uploadResult.eager[0];
-      
-      console.log('✅ Vidéo traitée:', {
-        url: processedVideo.secure_url,
-        format: processedVideo.format,
-        size: processedVideo.bytes
-      });
-
-      // 3. Renvoyer le vrai fichier coupé
-      res.json({ 
-        success: true,
-        message: '✅ Vidéo coupée avec succès !',
-        downloadUrl: processedVideo.secure_url,
-        details: {
-          originalFile: req.file.originalname,
-          cutFrom: startTime + 's',
-          cutTo: endTime + 's',
-          duration: duration.toFixed(2) + 's',
-          outputSize: (processedVideo.bytes / 1024 / 1024).toFixed(2) + ' MB',
-          outputFormat: processedVideo.format.toUpperCase()
-        }
-      });
-
-    } else {
-      // Fallback si eager n'est pas disponible
-      const fallbackUrl = cloudinary.url(uploadResult.public_id, {
-        resource_type: 'video',
-        transformation: [
-          {
-            flags: 'splice',
-            variables: [
-              `$start_${Math.floor(startTime)}`,
-              `$end_${Math.floor(endTime)}`
-            ]
-          },
-          { quality: 'auto', format: 'mp4' }
-        ]
-      });
-
-      res.json({ 
-        success: true,
-        message: '✅ Vidéo coupée (méthode fallback) !',
-        downloadUrl: fallbackUrl,
-        details: {
-          originalFile: req.file.originalname,
-          cutFrom: startTime + 's',
-          cutTo: endTime + 's',
-          duration: duration.toFixed(2) + 's',
-          note: 'Transformations Cloudinary en cours'
-        }
-      });
-    }
-
-  } catch (error) {
-    console.error('❌ Erreur découpage:', error);
-    res.status(500).json({ 
-      error: 'Erreur lors du traitement vidéo',
-      details: error.message 
-    });
-  }
-});
-
-// Route video-info
-app.post('/api/video-info', upload.single('video'), (req, res) => {
-  try {
-    if (!req.file) {
-      return res.status(400).json({ error: 'Aucune vidéo reçue' });
-    }
-
-    // Simulation durée
-    const mockDuration = Math.floor(Math.random() * 300) + 30;
-    
-    res.json({
-      success: true,
-      duration: mockDuration,
-      filename: req.file.originalname,
-      fileSize: (req.file.size / 1024 / 1024).toFixed(2) + ' MB'
-    });
-
-  } catch (error) {
-    console.error('Erreur:', error);
-    res.status(500).json({ error: 'Erreur analyse vidéo' });
-  }
-});
-
-// ============ NOUVELLE ROUTE CORRIGÉE POUR DÉCOUPAGE MULTIPLE ============
-
 app.post('/api/cut-video-multiple', upload.single('video'), async (req, res) => {
   console.log('🔄 NOUVELLE VERSION BACKEND APPELÉE - URL MANUELLE');
   try {
@@ -283,18 +150,17 @@ app.post('/api/cut-video-multiple', upload.single('video'), async (req, res) => 
 
     console.log('✅ Vidéo uploadée:', uploadResult.public_id);
 
-    // 2. Générer les URLs avec des public_ids UNIQUES pour chaque partie
+    // 2. Générer les URLs avec le VRAI public_id
     const results = cutsArray.map((cut, index) => {
       try {
         const duration = cut.endTime - cut.startTime;
         
-        // Construction MANUELLE de l'URL Cloudinary avec public_id unique
-        const basePublicId = uploadResult.public_id;
-        const uniquePublicId = `${basePublicId}_part${index + 1}`;
+        // Utiliser le VRAI public_id (sans _partX)
+        const publicId = uploadResult.public_id;
         const cloudName = 'dyogjyik0';
         
-        // Syntaxe Cloudinary correcte pour le découpage vidéo
-        const videoUrl = `https://res.cloudinary.com/${cloudName}/video/upload/so_${cut.startTime.toFixed(2)},eo_${cut.endTime.toFixed(2)}/q_auto/f_mp4/${uniquePublicId}.mp4`;
+        // Syntaxe Cloudinary correcte
+        const videoUrl = `https://res.cloudinary.com/${cloudName}/video/upload/so_${cut.startTime.toFixed(2)},eo_${cut.endTime.toFixed(2)}/q_auto/f_mp4/${publicId}.mp4`;
 
         console.log(`📹 URL partie ${index + 1}:`, {
           start: cut.startTime,
@@ -322,20 +188,10 @@ app.post('/api/cut-video-multiple', upload.single('video'), async (req, res) => 
       }
     });
 
-    // 3. Vérifier les résultats
-    const successfulCuts = results.filter(r => r.success);
-    
-    if (successfulCuts.length === 0) {
-      return res.status(500).json({ 
-        error: 'Aucune coupe n\'a pu être générée',
-        details: results.map(r => r.error) 
-      });
-    }
-
-    // 4. Renvoyer les résultats
+    // 3. Renvoyer les résultats
     res.json({ 
       success: true,
-      message: `✅ Vidéo découpée en ${successfulCuts.length} partie(s) !`,
+      message: `✅ Vidéo découpée en ${results.length} partie(s) !`,
       results: results
     });
 
