@@ -283,17 +283,18 @@ app.post('/api/cut-video-multiple', upload.single('video'), async (req, res) => 
 
     console.log('✅ Vidéo uploadée:', uploadResult.public_id);
 
-    // 2. Générer les URLs avec la syntaxe CORRECTE Cloudinary
+    // 2. Générer les URLs avec des public_ids UNIQUES pour chaque partie
     const results = cutsArray.map((cut, index) => {
       try {
         const duration = cut.endTime - cut.startTime;
         
-        // Construction MANUELLE de l'URL Cloudinary - SYNTAXE CORRECTE
-        const publicId = uploadResult.public_id;
-        const cloudName = 'dyogjyik0'; // Ton cloud name
+        // Construction MANUELLE de l'URL Cloudinary avec public_id unique
+        const basePublicId = uploadResult.public_id;
+        const uniquePublicId = `${basePublicId}_part${index + 1}`;
+        const cloudName = 'dyogjyik0';
         
         // Syntaxe Cloudinary correcte pour le découpage vidéo
-        const videoUrl = `https://res.cloudinary.com/${cloudName}/video/upload/so_${cut.startTime.toFixed(2)},eo_${cut.endTime.toFixed(2)}/q_auto/f_mp4/${publicId}.mp4`;
+        const videoUrl = `https://res.cloudinary.com/${cloudName}/video/upload/so_${cut.startTime.toFixed(2)},eo_${cut.endTime.toFixed(2)}/q_auto/f_mp4/${uniquePublicId}.mp4`;
 
         console.log(`📹 URL partie ${index + 1}:`, {
           start: cut.startTime,
