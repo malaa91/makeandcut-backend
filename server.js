@@ -72,7 +72,8 @@ app.post('/api/create-checkout-session', async (req, res) => {
 
     res.json({ 
       success: true, 
-      sessionId: session.id
+      sessionId: session.id,
+      url: session.url  // IMPORTANT : Retourne l'URL de checkout
     });
 
   } catch (error) {
