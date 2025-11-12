@@ -4,6 +4,8 @@ const multer = require('multer');
 const { v2: cloudinary } = require('cloudinary');
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 
+const users = new Map(); // En mémoire - à remplacer par une DB plus tard
+
 const app = express();
 
 // Configuration Cloudinary
@@ -130,8 +132,11 @@ app.post('/api/cut-video', upload.single('video'), async (req, res) => {
     const duration = endTime - startTime;
 
     console.log('✂️ Découpage vidéo demandé:', {
-      startTime, endTime, duration,
-      file: req.file.originalname
+      startTime, 
+      endTime, 
+      duration,
+      file: req.file.originalname,
+      size: (req.file.size / 1024 / 1024).toFixed(2) + ' MB'
     });
 
     // 1. Upload vers Cloudinary
@@ -139,31 +144,85 @@ app.post('/api/cut-video', upload.single('video'), async (req, res) => {
       cloudinary.uploader.upload_stream(
         { 
           resource_type: 'video',
-          folder: 'makeandcut'
+          folder: 'makeandcut',
+          eager: [
+            {
+              start_offset: startTime.toString(),
+              end_offset: endTime.toString(),
+              quality: "auto",
+              format: "mp4"
+            }
+          ]
         },
         (error, result) => {
-          if (error) reject(error);
-          else resolve(result);
+          if (error) {
+            console.error('❌ Erreur upload Cloudinary:', error);
+            reject(error);
+          } else {
+            console.log('✅ Upload Cloudinary réussi:', result.public_id);
+            resolve(result);
+          }
         }
       ).end(req.file.buffer);
     });
 
-    // SIMULATION - Pour l'instant on retourne un succès sans vrai découpage
-    res.json({ 
-      success: true,
-      message: '✅ Paramètres de découpage enregistrés!',
-      details: {
-        originalFile: req.file.originalname,
-        cloudinaryId: uploadResult.public_id,
-        cutFrom: startTime + 's',
-        cutTo: endTime + 's',
-        duration: duration.toFixed(2) + 's',
-        note: 'Découpage réel à implémenter avec Cloudinary Transformations'
-      }
-    });
+    // 2. Vérifier que le traitement eager est terminé
+    if (uploadResult.eager && uploadResult.eager[0]) {
+      const processedVideo = uploadResult.eager[0];
+      
+      console.log('✅ Vidéo traitée:', {
+        url: processedVideo.secure_url,
+        format: processedVideo.format,
+        size: processedVideo.bytes
+      });
+
+      // 3. Renvoyer le vrai fichier coupé
+      res.json({ 
+        success: true,
+        message: '✅ Vidéo coupée avec succès !',
+        downloadUrl: processedVideo.secure_url,
+        details: {
+          originalFile: req.file.originalname,
+          cutFrom: startTime + 's',
+          cutTo: endTime + 's',
+          duration: duration.toFixed(2) + 's',
+          outputSize: (processedVideo.bytes / 1024 / 1024).toFixed(2) + ' MB',
+          outputFormat: processedVideo.format.toUpperCase()
+        }
+      });
+
+    } else {
+      // Fallback si eager n'est pas disponible
+      const fallbackUrl = cloudinary.url(uploadResult.public_id, {
+        resource_type: 'video',
+        transformation: [
+          {
+            flags: 'splice',
+            variables: [
+              `$start_${Math.floor(startTime)}`,
+              `$end_${Math.floor(endTime)}`
+            ]
+          },
+          { quality: 'auto', format: 'mp4' }
+        ]
+      });
+
+      res.json({ 
+        success: true,
+        message: '✅ Vidéo coupée (méthode fallback) !',
+        downloadUrl: fallbackUrl,
+        details: {
+          originalFile: req.file.originalname,
+          cutFrom: startTime + 's',
+          cutTo: endTime + 's',
+          duration: duration.toFixed(2) + 's',
+          note: 'Transformations Cloudinary en cours'
+        }
+      });
+    }
 
   } catch (error) {
-    console.error('❌ Erreur:', error);
+    console.error('❌ Erreur découpage:', error);
     res.status(500).json({ 
       error: 'Erreur lors du traitement vidéo',
       details: error.message 
@@ -192,6 +251,36 @@ app.post('/api/video-info', upload.single('video'), (req, res) => {
     console.error('Erreur:', error);
     res.status(500).json({ error: 'Erreur analyse vidéo' });
   }
+});
+
+
+app.post('/api/register', async (req, res) => {
+  const { email, password } = req.body;
+  
+  if (users.has(email)) {
+    return res.status(400).json({ error: 'Utilisateur existe déjà' });
+  }
+
+  users.set(email, { email, password, plan: 'free', videosProcessed: 0 });
+  res.json({ success: true, message: 'Compte créé' });
+});
+
+app.post('/api/login', async (req, res) => {
+  const { email, password } = req.body;
+  const user = users.get(email);
+  
+  if (!user || user.password !== password) {
+    return res.status(401).json({ error: 'Identifiants incorrects' });
+  }
+
+  res.json({ 
+    success: true, 
+    user: { 
+      email: user.email, 
+      plan: user.plan,
+      videosProcessed: user.videosProcessed 
+    } 
+  });
 });
 
 // Port dynamique pour Render
