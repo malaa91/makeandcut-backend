@@ -253,6 +253,92 @@ app.post('/api/video-info', upload.single('video'), (req, res) => {
   }
 });
 
+// Route pour découper une vidéo en plusieurs parties
+app.post('/api/cut-video-multiple', upload.single('video'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'Aucune vidéo reçue' });
+    }
+
+    const { cuts } = req.body; // Tableau de {startTime, endTime, name}
+    const cutsArray = JSON.parse(cuts);
+
+    console.log('✂️ Découpage multiple demandé:', {
+      file: req.file.originalname,
+      numberOfCuts: cutsArray.length,
+      cuts: cutsArray
+    });
+
+    // 1. Upload vers Cloudinary
+    const uploadResult = await new Promise((resolve, reject) => {
+      cloudinary.uploader.upload_stream(
+        { 
+          resource_type: 'video',
+          folder: 'makeandcut'
+        },
+        (error, result) => {
+          if (error) reject(error);
+          else resolve(result);
+        }
+      ).end(req.file.buffer);
+    });
+
+    // 2. Générer les URLs pour chaque coupe
+    const results = await Promise.all(
+      cutsArray.map(async (cut, index) => {
+        try {
+          const duration = cut.endTime - cut.startTime;
+          
+          const videoUrl = cloudinary.url(uploadResult.public_id, {
+            resource_type: 'video',
+            transformation: [
+              {
+                flags: 'splice',
+                variables: [
+                  `$start_${Math.floor(cut.startTime)}`,
+                  `$end_${Math.floor(cut.endTime)}`
+                ]
+              },
+              { quality: 'auto', format: 'mp4' }
+            ]
+          });
+
+          return {
+            success: true,
+            name: cut.name || `Partie ${index + 1}`,
+            downloadUrl: videoUrl,
+            details: {
+              startTime: cut.startTime,
+              endTime: cut.endTime,
+              duration: duration.toFixed(2) + 's'
+            }
+          };
+        } catch (error) {
+          return {
+            success: false,
+            name: cut.name || `Partie ${index + 1}`,
+            error: error.message
+          };
+        }
+      })
+    );
+
+    // 3. Renvoyer tous les résultats
+    res.json({ 
+      success: true,
+      message: `✅ Vidéo découpée en ${results.length} partie(s) !`,
+      results: results
+    });
+
+  } catch (error) {
+    console.error('❌ Erreur découpage multiple:', error);
+    res.status(500).json({ 
+      error: 'Erreur lors du découpage multiple',
+      details: error.message 
+    });
+  }
+});
+
 
 app.post('/api/register', async (req, res) => {
   const { email, password } = req.body;
