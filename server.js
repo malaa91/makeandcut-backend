@@ -123,7 +123,10 @@ app.get('/', (req, res) => {
 
 // Route pour couper la vidéo AVEC CLOUDINARY
 app.post('/api/cut-video-multiple', upload.single('video'), async (req, res) => {
-  console.log('🔄 NOUVELLE VERSION BACKEND APPELÉE - URL MANUELLE');
+  console.log('🔴🔴🔴 DEBUG - CODE VERSION EXACT 🔴🔴🔴');
+  console.log('🔴 Date:', new Date().toISOString());
+  console.log('🔴 Commit: e114f2a - Supprimer _partX');
+  
   try {
     if (!req.file) {
       return res.status(400).json({ error: 'Aucune vidéo reçue' });
@@ -148,47 +151,31 @@ app.post('/api/cut-video-multiple', upload.single('video'), async (req, res) => 
       ).end(req.file.buffer);
     });
 
-    console.log('✅ Vidéo uploadée:', uploadResult.public_id);
+    console.log('✅ Vidéo uploadée. Public ID:', uploadResult.public_id);
 
-    // 2. Générer les URLs avec le VRAI public_id
+    // 2. DEBUG FORCÉ - Montre exactement ce qui est généré
     const results = cutsArray.map((cut, index) => {
-      try {
-        const duration = cut.endTime - cut.startTime;
-        
-        // Utiliser le VRAI public_id (sans _partX)
-        const publicId = uploadResult.public_id;
-        const cloudName = 'dyogjyik0';
-        
-        // Syntaxe Cloudinary correcte
-        const videoUrl = `https://res.cloudinary.com/${cloudName}/video/upload/so_${cut.startTime.toFixed(2)},eo_${cut.endTime.toFixed(2)}/q_auto/f_mp4/${publicId}.mp4`;
+      console.log(`🔴 DEBUG Partie ${index + 1}:`);
+      console.log(`🔴 Base Public ID: ${uploadResult.public_id}`);
+      
+      // URL SANS _partX
+      const videoUrl = `https://res.cloudinary.com/dyogjyik0/video/upload/so_${cut.startTime.toFixed(2)},eo_${cut.endTime.toFixed(2)}/q_auto/f_mp4/${uploadResult.public_id}.mp4`;
+      
+      console.log(`🔴 URL Générée: ${videoUrl}`);
+      console.log(`🔴 Contient '_part'? ${videoUrl.includes('_part')}`);
 
-        console.log(`📹 URL partie ${index + 1}:`, {
-          start: cut.startTime,
-          end: cut.endTime,
-          url: videoUrl
-        });
-
-        return {
-          success: true,
-          name: cut.name || `Partie ${index + 1}`,
-          downloadUrl: videoUrl,
-          details: {
-            startTime: cut.startTime,
-            endTime: cut.endTime,
-            duration: duration.toFixed(2) + 's'
-          }
-        };
-      } catch (error) {
-        console.error(`❌ Erreur partie ${index + 1}:`, error);
-        return {
-          success: false,
-          name: cut.name || `Partie ${index + 1}`,
-          error: error.message
-        };
-      }
+      return {
+        success: true,
+        name: cut.name || `Partie ${index + 1}`,
+        downloadUrl: videoUrl,
+        details: {
+          startTime: cut.startTime,
+          endTime: cut.endTime,
+          duration: (cut.endTime - cut.startTime).toFixed(2) + 's'
+        }
+      };
     });
 
-    // 3. Renvoyer les résultats
     res.json({ 
       success: true,
       message: `✅ Vidéo découpée en ${results.length} partie(s) !`,
@@ -196,11 +183,8 @@ app.post('/api/cut-video-multiple', upload.single('video'), async (req, res) => 
     });
 
   } catch (error) {
-    console.error('❌ Erreur découpage multiple:', error);
-    res.status(500).json({ 
-      error: 'Erreur lors du découpage multiple',
-      details: error.message 
-    });
+    console.error('❌ Erreur:', error);
+    res.status(500).json({ error: 'Erreur lors du découpage multiple', details: error.message });
   }
 });
 
