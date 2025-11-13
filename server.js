@@ -121,11 +121,9 @@ app.get('/', (req, res) => {
   });
 });
 
-// Route pour couper la vidéo AVEC CLOUDINARY
+
 app.post('/api/cut-video-multiple', upload.single('video'), async (req, res) => {
-  console.log('🔴🔴🔴 DEBUG - CODE VERSION EXACT 🔴🔴🔴');
-  console.log('🔴 Date:', new Date().toISOString());
-  console.log('🔴 Commit: e114f2a - Supprimer _partX');
+  console.log('🎯 Découpage multiple - Version corrigée');
   
   try {
     if (!req.file) {
@@ -135,14 +133,23 @@ app.post('/api/cut-video-multiple', upload.single('video'), async (req, res) => 
     const { cuts } = req.body;
     const cutsArray = JSON.parse(cuts);
 
-    console.log('✂️ Découpage multiple demandé:', cutsArray);
+    console.log('✂️ Découpage multiple demandé:', cutsArray.length, 'parties');
 
     // 1. Upload vers Cloudinary
     const uploadResult = await new Promise((resolve, reject) => {
       cloudinary.uploader.upload_stream(
         { 
           resource_type: 'video',
-          folder: 'makeandcut'
+          folder: 'makeandcut',
+          eager: cutsArray.map((cut, index) => ({
+            transformation: [
+              {
+                flags: `splice:${cut.startTime.toFixed(2)}_${cut.endTime.toFixed(2)}`,
+                format: 'mp4',
+                quality: 'auto'
+              }
+            ]
+          }))
         },
         (error, result) => {
           if (error) reject(error);
@@ -153,38 +160,69 @@ app.post('/api/cut-video-multiple', upload.single('video'), async (req, res) => 
 
     console.log('✅ Vidéo uploadée. Public ID:', uploadResult.public_id);
 
-    // 2. DEBUG FORCÉ - Montre exactement ce qui est généré
-    const results = cutsArray.map((cut, index) => {
-      console.log(`🔴 DEBUG Partie ${index + 1}:`);
-      console.log(`🔴 Base Public ID: ${uploadResult.public_id}`);
-      
-      // URL SANS _partX
-      const videoUrl = `https://res.cloudinary.com/dyogjyik0/video/upload/so_${cut.startTime.toFixed(2)},eo_${cut.endTime.toFixed(2)}/q_auto/f_mp4/${uploadResult.public_id}.mp4`;
-      
-      console.log(`🔴 URL Générée: ${videoUrl}`);
-      console.log(`🔴 Contient '_part'? ${videoUrl.includes('_part')}`);
+    // 2. Méthode ALTERNATIVE plus fiable : Créer chaque partie individuellement
+    const results = await Promise.all(
+      cutsArray.map(async (cut, index) => {
+        try {
+          console.log(`🔄 Génération partie ${index + 1}: ${cut.startTime}s à ${cut.endTime}s`);
+          
+          // Générer l'URL de transformation Cloudinary
+          const transformationUrl = cloudinary.url(uploadResult.public_id, {
+            resource_type: 'video',
+            transformation: [
+              { start_offset: cut.startTime },
+              { end_offset: cut.endTime },
+              { quality: 'auto', format: 'mp4' }
+            ]
+          });
 
-      return {
-        success: true,
-        name: cut.name || `Partie ${index + 1}`,
-        downloadUrl: videoUrl,
-        details: {
-          startTime: cut.startTime,
-          endTime: cut.endTime,
-          duration: (cut.endTime - cut.startTime).toFixed(2) + 's'
+          console.log(`✅ URL partie ${index + 1}:`, transformationUrl);
+
+          return {
+            success: true,
+            name: cut.name || `Partie ${index + 1}`,
+            downloadUrl: transformationUrl,
+            details: {
+              startTime: cut.startTime,
+              endTime: cut.endTime,
+              duration: (cut.endTime - cut.startTime).toFixed(2) + 's'
+            }
+          };
+        } catch (error) {
+          console.error(`❌ Erreur partie ${index + 1}:`, error);
+          return {
+            success: false,
+            name: cut.name || `Partie ${index + 1}`,
+            error: error.message
+          };
         }
-      };
-    });
+      })
+    );
+
+    // 3. Vérifier si toutes les parties ont été générées
+    const successfulResults = results.filter(r => r.success);
+    
+    if (successfulResults.length === 0) {
+      return res.status(500).json({ 
+        error: 'Aucune partie n\'a pu être générée',
+        details: results 
+      });
+    }
+
+    console.log(`✅ ${successfulResults.length}/${results.length} parties générées avec succès`);
 
     res.json({ 
       success: true,
-      message: `✅ Vidéo découpée en ${results.length} partie(s) !`,
-      results: results
+      message: `✅ Vidéo découpée en ${successfulResults.length} partie(s) !`,
+      results: successfulResults
     });
 
   } catch (error) {
-    console.error('❌ Erreur:', error);
-    res.status(500).json({ error: 'Erreur lors du découpage multiple', details: error.message });
+    console.error('❌ Erreur globale:', error);
+    res.status(500).json({ 
+      error: 'Erreur lors du découpage multiple', 
+      details: error.message 
+    });
   }
 });
 
